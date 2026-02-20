@@ -1,0 +1,27 @@
+build/
+build-release/
+build-*/
+*.o
+*.a
+*.d
+
+# Pattern databases — large binary files, generated locally
+data/
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
