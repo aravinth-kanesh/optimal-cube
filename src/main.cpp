@@ -2,7 +2,7 @@
 #include "moves.h"
 #include "solver.h"
 #include "pattern_db.h"
-#include "heuristic.h"
+#include "fast_solver.h"
 #include "utils.h"
 #include <iostream>
 #include <string>
@@ -29,7 +29,7 @@ static void print_usage(const char* prog) {
               << "  " << prog << " --random-depth 18 --seed 42\n";
 }
 
-static void run_interactive(IDASolver& solver) {
+static void run_interactive(std::function<SolveResult(const CubeState&, int)> solve_fn, int max_depth) {
     std::cout << "Interactive mode. Enter moves (e.g. R U R' U'), 'solve' to solve, 'quit' to exit.\n";
     CubeState state;
     std::string line;
@@ -46,7 +46,7 @@ static void run_interactive(IDASolver& solver) {
                 continue;
             }
             std::cout << "Solving...\n";
-            auto result = solver.solve(state);
+            auto result = solve_fn(state, max_depth);
             std::cout << format_solve_stats(result) << "\n";
             continue;
         }
@@ -117,25 +117,27 @@ int main(int argc, char* argv[]) {
     // Initialize move tables
     init_moves();
 
-    // Build heuristic
+    // Set up solver — FastIDASolver when pattern DBs are available, IDASolver otherwise.
     PatternDatabases dbs;
-    std::function<int(const CubeState&)> heuristic_fn;
+    std::unique_ptr<FastIDASolver> fast_solver;
+    std::unique_ptr<IDASolver>     ida_solver;
+    std::function<SolveResult(const CubeState&, int)> solve_fn;
 
     if (!no_pattern_db) {
-        // Ensure data dir exists
         std::filesystem::create_directories(data_dir);
         dbs.load_or_build(data_dir);
-        heuristic_fn = make_heuristic(dbs);
+        build_cp_move_table();
+        fast_solver = std::make_unique<FastIDASolver>(dbs.corner_db, dbs.edge_orient_db);
+        solve_fn = [&](const CubeState& s, int d) { return fast_solver->solve(s, d); };
     } else {
         std::cerr << "Using simple misplaced-cubies heuristic (slow!)\n";
-        heuristic_fn = heuristic_misplaced;
+        ida_solver = std::make_unique<IDASolver>(HeuristicFn(heuristic_misplaced));
+        solve_fn = [&](const CubeState& s, int d) { return ida_solver->solve(s, d); };
     }
-
-    IDASolver solver(heuristic_fn);
 
     // Interactive mode
     if (interactive) {
-        run_interactive(solver);
+        run_interactive(solve_fn, max_depth);
         return 0;
     }
 
@@ -177,7 +179,7 @@ int main(int argc, char* argv[]) {
 
     // Solve
     std::cout << "Solving...\n";
-    auto result = solver.solve(state, max_depth);
+    auto result = solve_fn(state, max_depth);
 
     std::cout << format_solve_stats(result) << "\n";
 
