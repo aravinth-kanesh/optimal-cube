@@ -6,6 +6,7 @@
 CpMoveTable CP_MOVE_TABLE;
 CoMoveTable CO_MOVE_TABLE;
 EoMoveTable EO_MOVE_TABLE;
+InvEpTable  INV_EP_TABLE;
 
 // Corner permutation move table (right multiplication).
 // new_cp[i] = cp[mv.cp[i]]
@@ -57,15 +58,44 @@ void build_eo_move_table() {
     }
 }
 
+void build_inv_ep_table() {
+    for (int m = 0; m < NUM_MOVES; m++)
+        for (int j = 0; j < 12; j++)
+            INV_EP_TABLE[m][MOVE_TABLE[m].ep[j]] = (uint8_t)j;
+}
+
+// Partial Lehmer rank factors: P(11,5), P(10,4), P(9,3), P(8,2), P(7,1), P(6,0)
+static const uint32_t EPF[6] = {55440u, 5040u, 504u, 56u, 7u, 1u};
+
 FastIDASolver::FastIDASolver(const CornerPatternDB& corner_db,
-                             const EdgeOrientDB&    edge_orient_db)
-    : corner_db_(corner_db), edge_orient_db_(edge_orient_db),
-      nodes_explored_(0), cp_idx_(0), co_idx_(0), eo_idx_(0)
+                             const EdgePatternDB&   edge_db1,
+                             const EdgePatternDB&   edge_db2)
+    : corner_db_(corner_db), edge_db1_(edge_db1), edge_db2_(edge_db2),
+      nodes_explored_(0), cp_idx_(0), co_idx_(0), eo_idx_(0),
+      ep1_idx_(0), ep2_idx_(0)
 {
     memset(cp_, 0, sizeof cp_);
     memset(co_, 0, sizeof co_);
     memset(ep_, 0, sizeof ep_);
     memset(eo_, 0, sizeof eo_);
+    memset(ep1_pos_, 0, sizeof ep1_pos_);
+    memset(ep1_ori_, 0, sizeof ep1_ori_);
+    memset(ep2_pos_, 0, sizeof ep2_pos_);
+    memset(ep2_ori_, 0, sizeof ep2_ori_);
+}
+
+uint32_t FastIDASolver::encode_ep(const uint8_t pos[6], const uint8_t ori[6]) const {
+    uint32_t perm_rank = 0;
+    bool used[12] = {};
+    for (int k = 0; k < 6; k++) {
+        int count = 0;
+        for (int j = 0; j < pos[k]; j++) if (!used[j]) count++;
+        perm_rank += (uint32_t)count * EPF[k];
+        used[pos[k]] = true;
+    }
+    uint32_t orient = 0;
+    for (int k = 0; k < 6; k++) orient |= ((uint32_t)ori[k] << k);
+    return perm_rank * 64u + orient;
 }
 
 SolveResult FastIDASolver::solve(const CubeState& start, int max_depth) {
@@ -79,9 +109,23 @@ SolveResult FastIDASolver::solve(const CubeState& start, int max_depth) {
     const uint32_t start_cp_idx = encode_corner_perm(start.cp);
     const uint32_t start_co_idx = encode_corner_orient(start.co);
     const uint32_t start_eo_idx = encode_edge_orient(start.eo);
-    cp_idx_ = start_cp_idx;
-    co_idx_ = start_co_idx;
-    eo_idx_ = start_eo_idx;
+
+    // Find positions and orientations of tracked edges for each group
+    uint8_t s_ep1_pos[6], s_ep1_ori[6], s_ep2_pos[6], s_ep2_ori[6];
+    for (int k = 0; k < 6; k++) {
+        for (int j = 0; j < 12; j++) {
+            if (start.ep[j] == k)   { s_ep1_pos[k] = j; s_ep1_ori[k] = start.eo[j]; }
+            if (start.ep[j] == k+6) { s_ep2_pos[k] = j; s_ep2_ori[k] = start.eo[j]; }
+        }
+    }
+
+    const uint32_t start_ep1_idx = encode_ep(s_ep1_pos, s_ep1_ori);
+    const uint32_t start_ep2_idx = encode_ep(s_ep2_pos, s_ep2_ori);
+
+    cp_idx_ = start_cp_idx; co_idx_ = start_co_idx; eo_idx_ = start_eo_idx;
+    ep1_idx_ = start_ep1_idx; ep2_idx_ = start_ep2_idx;
+    memcpy(ep1_pos_, s_ep1_pos, 6); memcpy(ep1_ori_, s_ep1_ori, 6);
+    memcpy(ep2_pos_, s_ep2_pos, 6); memcpy(ep2_ori_, s_ep2_ori, 6);
 
     if (is_solved()) {
         auto t1 = std::chrono::high_resolution_clock::now();
@@ -93,9 +137,10 @@ SolveResult FastIDASolver::solve(const CubeState& start, int max_depth) {
     while (threshold <= max_depth) {
         for (int i = 0; i < 8;  i++) { cp_[i] = start.cp[i]; co_[i] = start.co[i]; }
         for (int i = 0; i < 12; i++) { ep_[i] = start.ep[i]; eo_[i] = start.eo[i]; }
-        cp_idx_ = start_cp_idx;
-        co_idx_ = start_co_idx;
-        eo_idx_ = start_eo_idx;
+        cp_idx_ = start_cp_idx; co_idx_ = start_co_idx; eo_idx_ = start_eo_idx;
+        ep1_idx_ = start_ep1_idx; ep2_idx_ = start_ep2_idx;
+        memcpy(ep1_pos_, s_ep1_pos, 6); memcpy(ep1_ori_, s_ep1_ori, 6);
+        memcpy(ep2_pos_, s_ep2_pos, 6); memcpy(ep2_ori_, s_ep2_ori, 6);
         path_.clear();
 
         int result = search(0, threshold, -1);
@@ -118,10 +163,12 @@ SolveResult FastIDASolver::solve(const CubeState& start, int max_depth) {
             std::chrono::duration<double>(t1 - t0).count()};
 }
 
-// Two table lookups, no encoding.
+// Three table lookups, no encoding.
 int FastIDASolver::heuristic() const {
     int h = (int)corner_db_.lookup_idx(cp_idx_ * 2187u + co_idx_);
-    return std::max(h, (int)edge_orient_db_.lookup_idx(eo_idx_));
+    h = std::max(h, (int)edge_db1_.lookup_idx(ep1_idx_));
+    h = std::max(h, (int)edge_db2_.lookup_idx(ep2_idx_));
+    return h;
 }
 
 bool FastIDASolver::is_solved() const {
@@ -134,7 +181,7 @@ bool FastIDASolver::is_solved() const {
 // Apply move m in-place.  Right multiplication: compose(state, mv).
 //   ncp[i] = cp[mv.cp[i]],   nco[i] = (co[mv.cp[i]] + mv.co[i]) % 3
 //   nep[i] = ep[mv.ep[i]],   neo[i] = (eo[mv.ep[i]] + mv.eo[i]) % 2
-// All three cached indices updated via the precomputed tables.
+// Corner/EO indices updated via move tables. Partial edge state updated via INV_EP_TABLE.
 void FastIDASolver::apply(int m) {
     const CubeState& mv = MOVE_TABLE[m];
     uint8_t ncp[8], nco[8], nep[12], neo[12];
@@ -153,6 +200,20 @@ void FastIDASolver::apply(int m) {
     eo_idx_ = EO_MOVE_TABLE[m][eo_idx_];
     memcpy(cp_, ncp, 8);  memcpy(co_, nco, 8);
     memcpy(ep_, nep, 12); memcpy(eo_, neo, 12);
+
+    // Update partial edge state for groups 0 and 1
+    for (int k = 0; k < 6; k++) {
+        uint8_t np = INV_EP_TABLE[m][ep1_pos_[k]];
+        ep1_ori_[k] = (ep1_ori_[k] + mv.eo[np]) % 2;
+        ep1_pos_[k] = np;
+    }
+    for (int k = 0; k < 6; k++) {
+        uint8_t np = INV_EP_TABLE[m][ep2_pos_[k]];
+        ep2_ori_[k] = (ep2_ori_[k] + mv.eo[np]) % 2;
+        ep2_pos_[k] = np;
+    }
+    ep1_idx_ = encode_ep(ep1_pos_, ep1_ori_);
+    ep2_idx_ = encode_ep(ep2_pos_, ep2_ori_);
 }
 
 int FastIDASolver::search(int g, int threshold, int prev_move) {
@@ -163,11 +224,15 @@ int FastIDASolver::search(int g, int threshold, int prev_move) {
 
     nodes_explored_++;
 
-    // Save state (52 bytes, fits in one cache line)
+    // Save state (84 bytes: raw arrays + cached indices + partial edge tracking)
     uint8_t  scp[8], sco[8], sep[12], seo[12];
-    uint32_t scp_idx = cp_idx_, sco_idx = co_idx_, seo_idx = eo_idx_;
+    uint8_t  sep1_pos[6], sep1_ori[6], sep2_pos[6], sep2_ori[6];
+    uint32_t scp_idx  = cp_idx_,  sco_idx  = co_idx_,  seo_idx  = eo_idx_;
+    uint32_t sep1_idx = ep1_idx_, sep2_idx = ep2_idx_;
     memcpy(scp, cp_, 8);  memcpy(sco, co_, 8);
     memcpy(sep, ep_, 12); memcpy(seo, eo_, 12);
+    memcpy(sep1_pos, ep1_pos_, 6); memcpy(sep1_ori, ep1_ori_, 6);
+    memcpy(sep2_pos, ep2_pos_, 6); memcpy(sep2_ori, ep2_ori_, 6);
 
     int min_t = INF;
 
@@ -183,9 +248,12 @@ int FastIDASolver::search(int g, int threshold, int prev_move) {
 
         path_.pop_back();
 
-        cp_idx_ = scp_idx; co_idx_ = sco_idx; eo_idx_ = seo_idx;
+        cp_idx_  = scp_idx;  co_idx_  = sco_idx;  eo_idx_  = seo_idx;
+        ep1_idx_ = sep1_idx; ep2_idx_ = sep2_idx;
         memcpy(cp_, scp, 8);  memcpy(co_, sco, 8);
         memcpy(ep_, sep, 12); memcpy(eo_, seo, 12);
+        memcpy(ep1_pos_, sep1_pos, 6); memcpy(ep1_ori_, sep1_ori, 6);
+        memcpy(ep2_pos_, sep2_pos, 6); memcpy(ep2_ori_, sep2_ori, 6);
     }
 
     return min_t;

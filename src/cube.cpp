@@ -137,3 +137,34 @@ std::array<uint8_t, NUM_EDGES> decode_edge_orient(uint32_t idx) {
     eo[NUM_EDGES - 1] = sum % 2;
     return eo;
 }
+
+// Partial Lehmer rank factors: P(11,5), P(10,4), P(9,3), P(8,2), P(7,1), P(6,0)
+static const uint32_t PARTIAL_PERM_FACTORS[6] = {55440u, 5040u, 504u, 56u, 7u, 1u};
+
+uint32_t encode_edge_partial(const uint8_t ep[12], const uint8_t eo[12], int group) {
+    const int base = group * 6;
+
+    // Find position and orientation of each tracked edge label
+    uint8_t pos[6], ori[6];
+    for (int k = 0; k < 6; k++) {
+        for (int j = 0; j < 12; j++) {
+            if (ep[j] == base + k) { pos[k] = (uint8_t)j; ori[k] = eo[j]; break; }
+        }
+    }
+
+    // Partial Lehmer rank of pos[6] among ordered 6-tuples from {0..11}
+    uint32_t perm_rank = 0;
+    bool used[12] = {};
+    for (int k = 0; k < 6; k++) {
+        int count = 0;
+        for (int j = 0; j < pos[k]; j++) if (!used[j]) count++;
+        perm_rank += (uint32_t)count * PARTIAL_PERM_FACTORS[k];
+        used[pos[k]] = true;
+    }
+
+    // 6-bit orientation index
+    uint32_t orient_idx = 0;
+    for (int k = 0; k < 6; k++) orient_idx |= ((uint32_t)ori[k] << k);
+
+    return perm_rank * 64u + orient_idx;
+}

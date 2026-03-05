@@ -77,3 +77,8 @@ inline uint32_t corner_db_index(const CubeState& c) {
 inline uint32_t edge_orient_index(const CubeState& c) {
     return encode_edge_orient(c.eo);
 }
+
+// Partial edge DB index: position and orientation of 6 specific edges.
+// group 0: labels 0-5 (UR,UF,UL,UB,DR,DF), group 1: labels 6-11 (DL,DB,FR,FL,BL,BR).
+// Uses partial Lehmer rank for positions. Range: [0, P(12,6)*2^6 - 1] = [0, 42,577,919].
+uint32_t encode_edge_partial(const uint8_t ep[12], const uint8_t eo[12], int group);

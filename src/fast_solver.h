@@ -35,6 +35,12 @@ void build_cp_move_table();
 void build_co_move_table();
 void build_eo_move_table();
 
+// inv_ep[m][p] = destination of the edge at position p after move m (right mult).
+// Used to track partial edge positions incrementally.
+using InvEpTable = std::array<std::array<uint8_t, 12>, NUM_MOVES>;
+extern InvEpTable INV_EP_TABLE;
+void build_inv_ep_table();
+
 // IDA* solver that avoids CubeState copies and Lehmer re-encoding on every node.
 //
 // Bottlenecks in the naive solver:
@@ -45,17 +51,19 @@ void build_eo_move_table();
 // This solver instead:
 //   - Keeps state as raw arrays, modified in-place with save/restore
 //   - Updates cp_idx, co_idx, eo_idx in O(1) via the move tables above
-//   - heuristic() is two table lookups with no encoding
+//   - Tracks partial edge state (pos[6], ori[6]) for each group incrementally
+//   - Caches ep1_idx_, ep2_idx_ (recomputed in apply(), not heuristic())
+//   - heuristic() is three table lookups with no encoding
 //
-// Requires CornerPatternDB and EdgeOrientDB to be loaded.
-// Call build_cp_move_table(), build_co_move_table(), build_eo_move_table() first.
+// Requires all three pattern DBs. Call build_cp/co/eo_move_table() and
+// build_inv_ep_table() before constructing.
 //
-// Uses right multiplication internally. The path is reversed before returning
-// so the reported move sequence is correct for the standard left-mult convention.
+// Uses right multiplication internally; path reversed before returning.
 class FastIDASolver {
 public:
     FastIDASolver(const CornerPatternDB& corner_db,
-                  const EdgeOrientDB&    edge_orient_db);
+                  const EdgePatternDB&   edge_db1,
+                  const EdgePatternDB&   edge_db2);
 
     SolveResult solve(const CubeState& start, int max_depth = 20);
 
@@ -63,16 +71,25 @@ public:
 
 private:
     const CornerPatternDB& corner_db_;
-    const EdgeOrientDB&    edge_orient_db_;
+    const EdgePatternDB&   edge_db1_;
+    const EdgePatternDB&   edge_db2_;
 
     uint64_t         nodes_explored_;
     std::vector<int> path_;
 
-    // Search state, modified in-place, saved/restored per recursion level (52 bytes)
+    // Core state — cp/co/ep/eo arrays + encoded indices for corner and full EO
     uint8_t  cp_[8], co_[8], ep_[12], eo_[12];
-    uint32_t cp_idx_;  // Lehmer index of cp_, kept in sync by apply()
-    uint32_t co_idx_;  // base-3 index of co_, kept in sync by apply()
-    uint32_t eo_idx_;  // base-2 index of eo_, kept in sync by apply()
+    uint32_t cp_idx_;   // Lehmer index of cp_
+    uint32_t co_idx_;   // base-3 index of co_
+    uint32_t eo_idx_;   // base-2 index of eo_ (kept for is_solved())
+
+    // Partial edge tracking for edge pattern DBs (groups 0 and 1)
+    // ep1_pos_[k] = current position of edge label k (group 0: labels 0-5)
+    // ep2_pos_[k] = current position of edge label 6+k (group 1: labels 6-11)
+    uint8_t ep1_pos_[6], ep1_ori_[6];
+    uint8_t ep2_pos_[6], ep2_ori_[6];
+    uint32_t ep1_idx_;  // encode_edge_partial result for group 0, kept in sync
+    uint32_t ep2_idx_;  // encode_edge_partial result for group 1, kept in sync
 
     static constexpr int FOUND = -1;
     static constexpr int INF   = 1000;
@@ -80,6 +97,7 @@ private:
     int  heuristic() const;
     bool is_solved()  const;
     void apply(int m);
+    uint32_t encode_ep(const uint8_t pos[6], const uint8_t ori[6]) const;
 
     int search(int g, int threshold, int prev_move);
 };

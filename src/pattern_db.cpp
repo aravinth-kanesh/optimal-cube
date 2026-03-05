@@ -212,48 +212,191 @@ bool EdgeOrientDB::load(const std::string& path) {
     return true;
 }
 
+// EdgePatternDB
+
+EdgePatternDB::EdgePatternDB() {
+    data_.assign((DB_SIZE + 1) / 2, 0xFF);
+}
+
+uint8_t EdgePatternDB::get(uint32_t idx) const {
+    uint8_t byte = data_[idx / 2];
+    return (idx % 2 == 0) ? (byte & 0x0F) : (byte >> 4);
+}
+
+void EdgePatternDB::set(uint32_t idx, uint8_t val) {
+    uint8_t& byte = data_[idx / 2];
+    if (idx % 2 == 0) byte = (byte & 0xF0) | (val & 0x0F);
+    else               byte = (byte & 0x0F) | ((val & 0x0F) << 4);
+}
+
+uint8_t EdgePatternDB::lookup(const uint8_t ep[12], const uint8_t eo[12], int group) const {
+    return lookup_idx(encode_edge_partial(ep, eo, group));
+}
+
+// Factors for partial Lehmer rank: P(11,5), P(10,4), ..., P(6,0)
+static const uint32_t EPF[6] = {55440u, 5040u, 504u, 56u, 7u, 1u};
+
+// Encode (pos[6], ori[6]) partial state to a DB index
+static uint32_t ep_encode(const uint8_t pos[6], const uint8_t ori[6]) {
+    uint32_t perm_rank = 0;
+    bool used[12] = {};
+    for (int k = 0; k < 6; k++) {
+        int count = 0;
+        for (int j = 0; j < pos[k]; j++) if (!used[j]) count++;
+        perm_rank += (uint32_t)count * EPF[k];
+        used[pos[k]] = true;
+    }
+    uint32_t orient = 0;
+    for (int k = 0; k < 6; k++) orient |= ((uint32_t)ori[k] << k);
+    return perm_rank * 64u + orient;
+}
+
+// Decode DB index to (pos[6], ori[6]) partial state
+static void ep_decode(uint32_t idx, uint8_t pos[6], uint8_t ori[6]) {
+    uint32_t orient = idx % 64;
+    uint32_t perm_rank = idx / 64;
+    for (int k = 0; k < 6; k++) ori[k] = (orient >> k) & 1;
+    bool used[12] = {};
+    for (int k = 0; k < 6; k++) {
+        uint32_t count = perm_rank / EPF[k];
+        perm_rank %= EPF[k];
+        int j = 0, n = 0;
+        for (; j < 12; j++) {
+            if (!used[j]) { if ((uint32_t)n == count) break; n++; }
+        }
+        pos[k] = (uint8_t)j;
+        used[j] = true;
+    }
+}
+
+// BFS from solved state over partial edge states (pos[6], ori[6]).
+// Applies moves using inverse edge permutation: if edge k is at pos[k],
+// after move m it goes to inv_ep[m][pos[k]], with orientation updated by mv.eo.
+void EdgePatternDB::build(int group) {
+    auto t_start = std::chrono::high_resolution_clock::now();
+    std::fill(data_.begin(), data_.end(), 0xFF);
+
+    // Precompute inverse edge permutation for each move
+    // inv_ep[m][p] = destination of the edge that was at position p after move m
+    uint8_t inv_ep[NUM_MOVES][12];
+    for (int m = 0; m < NUM_MOVES; m++)
+        for (int j = 0; j < 12; j++)
+            inv_ep[m][MOVE_TABLE[m].ep[j]] = (uint8_t)j;
+
+    std::queue<uint32_t> q;
+    uint32_t solved_idx = encode_edge_partial(SOLVED_CUBE.ep.data(),
+                                              SOLVED_CUBE.eo.data(), group);
+    set(solved_idx, 0);
+    q.push(solved_idx);
+
+    uint64_t visited = 1;
+    int current_depth = 0;
+    std::cerr << "Building edge pattern DB " << group
+              << " (" << DB_SIZE << " states)...\n";
+
+    while (!q.empty()) {
+        uint32_t idx = q.front(); q.pop();
+        uint8_t dist = get(idx);
+
+        if (dist != current_depth) {
+            current_depth = dist;
+            auto t_now = std::chrono::high_resolution_clock::now();
+            double elapsed = std::chrono::duration<double>(t_now - t_start).count();
+            std::cerr << "  Depth " << current_depth
+                      << ": " << visited << " states (" << elapsed << "s)\n";
+        }
+
+        uint8_t pos[6], ori[6];
+        ep_decode(idx, pos, ori);
+
+        for (int m = 0; m < NUM_MOVES; m++) {
+            const CubeState& mv = MOVE_TABLE[m];
+            uint8_t npos[6], nori[6];
+            for (int k = 0; k < 6; k++) {
+                npos[k] = inv_ep[m][pos[k]];
+                nori[k] = (ori[k] + mv.eo[npos[k]]) % 2;
+            }
+            uint32_t new_idx = ep_encode(npos, nori);
+            if (get(new_idx) == 15) {
+                set(new_idx, dist + 1);
+                q.push(new_idx);
+                visited++;
+            }
+        }
+    }
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double elapsed = std::chrono::duration<double>(t_end - t_start).count();
+    std::cerr << "Edge DB " << group << " complete: " << visited
+              << " states in " << elapsed << "s\n";
+    ready_ = true;
+}
+
+bool EdgePatternDB::save(const std::string& path) const {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) { std::cerr << "Failed to open " << path << " for writing\n"; return false; }
+    f.write(reinterpret_cast<const char*>(data_.data()), (long)data_.size());
+    return f.good();
+}
+
+bool EdgePatternDB::load(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    f.seekg(0, std::ios::end);
+    size_t file_size = f.tellg();
+    f.seekg(0, std::ios::beg);
+    size_t expected = (DB_SIZE + 1) / 2;
+    if (file_size != expected) {
+        std::cerr << "Edge DB file size mismatch: expected " << expected
+                  << " bytes, got " << file_size << "\n";
+        return false;
+    }
+    f.read(reinterpret_cast<char*>(data_.data()), (long)data_.size());
+    if (!f) return false;
+    ready_ = true;
+    return true;
+}
+
 // PatternDatabases
 
 bool PatternDatabases::load_or_build(const std::string& data_dir) {
-    std::string corner_path    = data_dir + "/corner_pattern.db";
+    std::string corner_path      = data_dir + "/corner_pattern.db";
     std::string edge_orient_path = data_dir + "/edge_orient.db";
+    std::string edge1_path       = data_dir + "/edge1_pattern.db";
+    std::string edge2_path       = data_dir + "/edge2_pattern.db";
 
     bool loaded_from_disk = true;
 
-    // Try to load corner DB
-    if (!corner_db.load(corner_path)) {
-        std::cerr << "Corner DB not found, building...\n";
-        corner_db.build();
-        if (!corner_db.save(corner_path)) {
-            std::cerr << "Warning: could not save corner DB to " << corner_path << "\n";
+    auto try_load_or_build = [&](auto& db, const std::string& path,
+                                 const std::string& name, auto build_fn) {
+        if (!db.load(path)) {
+            std::cerr << name << " not found, building...\n";
+            build_fn();
+            if (!db.save(path))
+                std::cerr << "Warning: could not save " << name << " to " << path << "\n";
+            loaded_from_disk = false;
+        } else {
+            std::cerr << "Loaded " << name << " from " << path << "\n";
         }
-        loaded_from_disk = false;
-    } else {
-        std::cerr << "Loaded corner pattern DB from " << corner_path << "\n";
-    }
+    };
 
-    // Try to load edge orientation DB
-    if (!edge_orient_db.load(edge_orient_path)) {
-        std::cerr << "Edge orient DB not found, building...\n";
-        edge_orient_db.build();
-        if (!edge_orient_db.save(edge_orient_path)) {
-            std::cerr << "Warning: could not save edge orient DB to " << edge_orient_path << "\n";
-        }
-        loaded_from_disk = false;
-    } else {
-        std::cerr << "Loaded edge orientation DB from " << edge_orient_path << "\n";
-    }
+    try_load_or_build(corner_db, corner_path, "corner pattern DB",
+                      [&]{ corner_db.build(); });
+    try_load_or_build(edge_orient_db, edge_orient_path, "edge orient DB",
+                      [&]{ edge_orient_db.build(); });
+    try_load_or_build(edge_db1, edge1_path, "edge pattern DB 0",
+                      [&]{ edge_db1.build(0); });
+    try_load_or_build(edge_db2, edge2_path, "edge pattern DB 1",
+                      [&]{ edge_db2.build(1); });
 
     return loaded_from_disk;
 }
 
 int PatternDatabases::heuristic(const CubeState& state) const {
     int h = 0;
-    if (corner_db.is_ready()) {
-        h = std::max(h, (int)corner_db.lookup(state));
-    }
-    if (edge_orient_db.is_ready()) {
-        h = std::max(h, (int)edge_orient_db.lookup(state));
-    }
+    if (corner_db.is_ready())    h = std::max(h, (int)corner_db.lookup(state));
+    if (edge_orient_db.is_ready()) h = std::max(h, (int)edge_orient_db.lookup(state));
+    if (edge_db1.is_ready())     h = std::max(h, (int)edge_db1.lookup(state.ep.data(), state.eo.data(), 0));
+    if (edge_db2.is_ready())     h = std::max(h, (int)edge_db2.lookup(state.ep.data(), state.eo.data(), 1));
     return h;
 }

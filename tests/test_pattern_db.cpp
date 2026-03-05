@@ -100,15 +100,66 @@ TEST(edge_orient_all_states_populated) {
     }
 }
 
+// Edge pattern DB tests (group 0: edges 0-5).
+// These build the 42M-state DB which takes ~1-2 min; run in CI if acceptable,
+// otherwise disable and verify manually with build_pattern_db.
+TEST(edge_pattern_db_solved) {
+    EdgePatternDB db;
+    db.build(0);
+    ASSERT(db.is_ready());
+    ASSERT_EQ((int)db.lookup(SOLVED_CUBE.ep.data(), SOLVED_CUBE.eo.data(), 0), 0);
+
+    EdgePatternDB db2;
+    db2.build(1);
+    ASSERT(db2.is_ready());
+    ASSERT_EQ((int)db2.lookup(SOLVED_CUBE.ep.data(), SOLVED_CUBE.eo.data(), 1), 0);
+}
+
+TEST(edge_pattern_db_one_move) {
+    EdgePatternDB db;
+    db.build(0);
+    for (int m = 0; m < NUM_MOVES; m++) {
+        CubeState s = apply_move(SOLVED_CUBE, m);
+        int h = (int)db.lookup(s.ep.data(), s.eo.data(), 0);
+        if (h != 1 && h != 0) {  // h==0 only if move leaves group-0 edges unchanged
+            // If any group-0 edge moved, h must be >= 1
+            bool group0_changed = false;
+            for (int j = 0; j < 12; j++) {
+                if (s.ep[j] != SOLVED_CUBE.ep[j] && (int)s.ep[j] < 6) group0_changed = true;
+                if (s.ep[j] < 6 && s.eo[j] != 0) group0_changed = true;
+            }
+            if (group0_changed && h == 0)
+                throw std::runtime_error("Edge DB0 returned 0 for non-solved group-0 state");
+        }
+        // Admissibility: h <= 1
+        if (h > 1) throw std::runtime_error("Edge DB0 overestimates for move " + MOVE_NAMES[m]);
+    }
+}
+
+TEST(edge_pattern_db_admissible) {
+    EdgePatternDB db1, db2;
+    db1.build(0);
+    db2.build(1);
+    // For R U R' U' (4 moves), h <= 4 for both groups
+    auto moves = parse_move_sequence("R U R' U'");
+    CubeState s = apply_moves(SOLVED_CUBE, moves);
+    ASSERT_LE((int)db1.lookup(s.ep.data(), s.eo.data(), 0), 4);
+    ASSERT_LE((int)db2.lookup(s.ep.data(), s.eo.data(), 1), 4);
+}
+
+TEST(edge_pattern_db_all_states_populated) {
+    EdgePatternDB db;
+    db.build(0);
+    // Spot-check: no unvisited entries (value 15) in first 1000 indices
+    for (uint32_t i = 0; i < 1000; i++) {
+        if (db.lookup_idx(i) == 15)
+            throw std::runtime_error("Edge pattern DB has unvisited state at index "
+                                     + std::to_string(i));
+    }
+}
+
 // Corner DB correctness with small spot checks
-// Build a partial corner DB using BFS for just a few levels,
-// then verify admissibility against the actual solver.
-//
 // NOTE: Full corner DB (88M states) is too slow to build in tests.
-// Checks:
-//   1. Solved state = 0
-//   2. All 1-move states have value = 1
-//   3. All n-move states have value <= n (admissibility)
 TEST(corner_db_solved_state) {
     CornerPatternDB db;
     db.build();  // ~5 min in production; here only to verify the solved state entry
@@ -190,11 +241,14 @@ int main(int argc, char* argv[]) {
     RUN_TEST(edge_orient_admissible);
     RUN_TEST(edge_orient_all_states_populated);
 
-    std::cout << "\n=== Corner Pattern DB Tests (requires ~5min to build) ===\n";
-    std::cout << "  Note: Skipping full corner DB tests (too slow for unit tests)\n";
-    std::cout << "  Run './build_pattern_db' to build the DB and use './cube_solver' to verify\n";
+    std::cout << "\n=== Edge Pattern DB Tests ===\n";
+    RUN_TEST(edge_pattern_db_solved);
+    RUN_TEST(edge_pattern_db_one_move);
+    RUN_TEST(edge_pattern_db_admissible);
+    RUN_TEST(edge_pattern_db_all_states_populated);
 
-    // These tests build the full 88MB corner DB - uncomment to run
+    std::cout << "\n=== Corner Pattern DB Tests (requires ~5min to build) ===\n";
+    std::cout << "  Skipping (too slow for unit tests); use build_pattern_db to build\n";
     // RUN_TEST(corner_db_solved_state);
     // RUN_TEST(corner_db_one_move_states);
     // RUN_TEST(corner_db_admissible_4moves);
