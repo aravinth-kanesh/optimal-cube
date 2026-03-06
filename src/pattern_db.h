@@ -101,11 +101,12 @@ struct PatternDatabases {
     EdgeOrientDB    edge_orient_db;  // kept for IDASolver fallback
     EdgePatternDB   edge_db1;        // group 0: edges 0-5
     EdgePatternDB   edge_db2;        // group 1: edges 6-11
+    EdgePatternDB   edge_db3;        // group 2: edges 0,2,4,6,8,10 (alternating)
 
     // Try to load from directory. Build if not found.
     // Returns true if loaded from disk, false if built fresh.
     bool load_or_build(const std::string& data_dir);
 
-    // Combined heuristic: max(corner_db, edge_db1, edge_db2)
+    // Combined heuristic: max(corner_db, edge_db1, edge_db2, edge_db3)
     int heuristic(const CubeState& state) const;
 };

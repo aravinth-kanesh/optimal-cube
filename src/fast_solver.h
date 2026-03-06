@@ -67,7 +67,8 @@ public:
 
     FastIDASolver(const CornerPatternDB& corner_db,
                   const EdgePatternDB&   edge_db1,
-                  const EdgePatternDB&   edge_db2);
+                  const EdgePatternDB&   edge_db2,
+                  const EdgePatternDB&   edge_db3);
 
     SolveResult solve(const CubeState& start, int max_depth = 20);
 
@@ -88,6 +89,7 @@ private:
     const CornerPatternDB& corner_db_;
     const EdgePatternDB&   edge_db1_;
     const EdgePatternDB&   edge_db2_;
+    const EdgePatternDB&   edge_db3_;
 
     uint64_t         nodes_explored_;
     std::vector<int> path_;
@@ -101,13 +103,16 @@ private:
     uint32_t co_idx_;   // base-3 index of co_
     uint32_t eo_idx_;   // base-2 index of eo_ (kept for is_solved())
 
-    // Partial edge tracking for edge pattern DBs (groups 0 and 1)
-    // ep1_pos_[k] = current position of edge label k (group 0: labels 0-5)
-    // ep2_pos_[k] = current position of edge label 6+k (group 1: labels 6-11)
+    // Partial edge tracking for edge pattern DBs (groups 0, 1, 2)
+    // ep1_pos_[k] = position of edge label k     (group 0: labels 0-5)
+    // ep2_pos_[k] = position of edge label 6+k   (group 1: labels 6-11)
+    // ep3_pos_[k] = position of edge label G2[k] (group 2: labels 0,2,4,6,8,10)
     uint8_t ep1_pos_[6], ep1_ori_[6];
     uint8_t ep2_pos_[6], ep2_ori_[6];
+    uint8_t ep3_pos_[6], ep3_ori_[6];
     uint32_t ep1_idx_;  // encode_edge_partial result for group 0, kept in sync
     uint32_t ep2_idx_;  // encode_edge_partial result for group 1, kept in sync
+    uint32_t ep3_idx_;  // encode_edge_partial result for group 2, kept in sync
 
     void init_state(const CubeState& start);
     int  heuristic() const;
@@ -128,7 +133,8 @@ class ParallelFastIDASolver {
 public:
     ParallelFastIDASolver(const CornerPatternDB& corner_db,
                           const EdgePatternDB&   edge_db1,
-                          const EdgePatternDB&   edge_db2);
+                          const EdgePatternDB&   edge_db2,
+                          const EdgePatternDB&   edge_db3);
 
     SolveResult solve(const CubeState& start, int max_depth = 20);
 
@@ -138,5 +144,6 @@ private:
     const CornerPatternDB& corner_db_;
     const EdgePatternDB&   edge_db1_;
     const EdgePatternDB&   edge_db2_;
+    const EdgePatternDB&   edge_db3_;
     uint64_t nodes_explored_;
 };

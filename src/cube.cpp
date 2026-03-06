@@ -142,13 +142,22 @@ std::array<uint8_t, NUM_EDGES> decode_edge_orient(uint32_t idx) {
 static const uint32_t PARTIAL_PERM_FACTORS[6] = {55440u, 5040u, 504u, 56u, 7u, 1u};
 
 uint32_t encode_edge_partial(const uint8_t ep[12], const uint8_t eo[12], int group) {
-    const int base = group * 6;
+    // Labels tracked by each group:
+    //   group 0: UR,UF,UL,UB,DR,DF      (edges 0-5)
+    //   group 1: DL,DB,FR,FL,BL,BR      (edges 6-11)
+    //   group 2: UR,UL,DR,DL,FR,BL      (alternating: edges 0,2,4,6,8,10)
+    static const uint8_t LABELS[3][6] = {
+        {0,1,2,3,4,5},
+        {6,7,8,9,10,11},
+        {0,2,4,6,8,10},
+    };
+    const uint8_t* labels = LABELS[group];
 
     // Find position and orientation of each tracked edge label
     uint8_t pos[6], ori[6];
     for (int k = 0; k < 6; k++) {
         for (int j = 0; j < 12; j++) {
-            if (ep[j] == base + k) { pos[k] = (uint8_t)j; ori[k] = eo[j]; break; }
+            if (ep[j] == labels[k]) { pos[k] = (uint8_t)j; ori[k] = eo[j]; break; }
         }
     }
 

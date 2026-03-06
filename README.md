@@ -16,8 +16,9 @@ updates via precomputed move tables. The heuristic is `max(h₁, h₂, h₃)`:
   corner configuration (8! × 3⁷ = 88,179,840 states, ~42 MB on disk).
 - **Edge partial database, group 0** — minimum moves to correctly place and
   orient edges UR, UF, UL, UB, DR, DF (P(12,6) × 2⁶ = 42,577,920 states, ~21 MB).
-- **Edge partial database, group 1** — same for edges DL, DB, FR, FL, BL, BR
-  (~21 MB).
+- **Edge partial database, group 1** — same for edges DL, DB, FR, FL, BL, BR (~21 MB).
+- **Edge partial database, group 2** — same for alternating edges UR, UL, DR, DL, FR, BL
+  (edges 0,2,4,6,8,10; ~21 MB). Overlapping with both groups gives tighter bounds.
 
 All three are admissible, so IDA* returns the minimum-move solution.
 
@@ -79,7 +80,7 @@ Benchmarked on an 8-core machine (Apple M-series, Release build, 3 pattern DBs):
 |----------------|---------------|------------|
 | ≤ 10 moves | < 1,000 | < 2 ms |
 | 12 moves | 5K – 65K | 3 – 27 ms |
-| 15 moves | 11M – 112M | 6 – 53 s (median ~34 s) |
+| 15 moves | 9M – 88M | 5 – 48 s (median ~32 s) |
 
 Performance at depth 15 varies widely depending on how tight the heuristic
 lower bound is for that particular scramble. The worst-case scrambles (where
@@ -126,6 +127,7 @@ data/                   — generated DB files (not committed)
   edge_orient.db        — ~2 KB
   edge1_pattern.db      — ~21 MB (edges UR UF UL UB DR DF)
   edge2_pattern.db      — ~21 MB (edges DL DB FR FL BL BR)
+  edge3_pattern.db      — ~21 MB (alternating edges UR UL DR DL FR BL)
 ```
 
 ## References

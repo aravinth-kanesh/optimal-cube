@@ -130,7 +130,7 @@ int main(int argc, char* argv[]) {
         build_co_move_table();
         build_eo_move_table();
         build_inv_ep_table();
-        fast_solver = std::make_unique<ParallelFastIDASolver>(dbs.corner_db, dbs.edge_db1, dbs.edge_db2);
+        fast_solver = std::make_unique<ParallelFastIDASolver>(dbs.corner_db, dbs.edge_db1, dbs.edge_db2, dbs.edge_db3);
         solve_fn = [&](const CubeState& s, int d) { return fast_solver->solve(s, d); };
     } else {
         std::cerr << "Using simple misplaced-cubies heuristic (slow!)\n";

@@ -364,6 +364,7 @@ bool PatternDatabases::load_or_build(const std::string& data_dir) {
     std::string edge_orient_path = data_dir + "/edge_orient.db";
     std::string edge1_path       = data_dir + "/edge1_pattern.db";
     std::string edge2_path       = data_dir + "/edge2_pattern.db";
+    std::string edge3_path       = data_dir + "/edge3_pattern.db";
 
     bool loaded_from_disk = true;
 
@@ -388,15 +389,18 @@ bool PatternDatabases::load_or_build(const std::string& data_dir) {
                       [&]{ edge_db1.build(0); });
     try_load_or_build(edge_db2, edge2_path, "edge pattern DB 1",
                       [&]{ edge_db2.build(1); });
+    try_load_or_build(edge_db3, edge3_path, "edge pattern DB 2",
+                      [&]{ edge_db3.build(2); });
 
     return loaded_from_disk;
 }
 
 int PatternDatabases::heuristic(const CubeState& state) const {
     int h = 0;
-    if (corner_db.is_ready())    h = std::max(h, (int)corner_db.lookup(state));
+    if (corner_db.is_ready())      h = std::max(h, (int)corner_db.lookup(state));
     if (edge_orient_db.is_ready()) h = std::max(h, (int)edge_orient_db.lookup(state));
-    if (edge_db1.is_ready())     h = std::max(h, (int)edge_db1.lookup(state.ep.data(), state.eo.data(), 0));
-    if (edge_db2.is_ready())     h = std::max(h, (int)edge_db2.lookup(state.ep.data(), state.eo.data(), 1));
+    if (edge_db1.is_ready())       h = std::max(h, (int)edge_db1.lookup(state.ep.data(), state.eo.data(), 0));
+    if (edge_db2.is_ready())       h = std::max(h, (int)edge_db2.lookup(state.ep.data(), state.eo.data(), 1));
+    if (edge_db3.is_ready())       h = std::max(h, (int)edge_db3.lookup(state.ep.data(), state.eo.data(), 2));
     return h;
 }

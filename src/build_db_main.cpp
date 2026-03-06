@@ -29,6 +29,7 @@ int main(int argc, char* argv[]) {
     std::string edge0_path  = data_dir + "/edge_orient.db";
     std::string edge1_path  = data_dir + "/edge1_pattern.db";
     std::string edge2_path  = data_dir + "/edge2_pattern.db";
+    std::string edge3_path  = data_dir + "/edge3_pattern.db";
 
     auto build_and_save = [](auto& db, const std::string& path, auto build_fn) {
         build_fn();
@@ -53,16 +54,22 @@ int main(int argc, char* argv[]) {
     if (!build_and_save(dbs.edge_db2, edge2_path, [&]{ dbs.edge_db2.build(1); }))
         return 1;
 
+    std::cerr << "\nBuilding edge pattern database (group 2: edges 0,2,4,6,8,10)...\n";
+    if (!build_and_save(dbs.edge_db3, edge3_path, [&]{ dbs.edge_db3.build(2); }))
+        return 1;
+
     std::cerr << "\nAll databases built successfully.\n\nVerification:\n";
     std::cerr << "  Solved corner:  " << (int)dbs.corner_db.lookup(SOLVED_CUBE) << " (expected 0)\n";
     std::cerr << "  Solved edge0:   " << (int)dbs.edge_db1.lookup(SOLVED_CUBE.ep.data(), SOLVED_CUBE.eo.data(), 0) << " (expected 0)\n";
     std::cerr << "  Solved edge1:   " << (int)dbs.edge_db2.lookup(SOLVED_CUBE.ep.data(), SOLVED_CUBE.eo.data(), 1) << " (expected 0)\n";
+    std::cerr << "  Solved edge2:   " << (int)dbs.edge_db3.lookup(SOLVED_CUBE.ep.data(), SOLVED_CUBE.eo.data(), 2) << " (expected 0)\n";
 
     auto moves = parse_move_sequence("R U R' U'");
     auto state = apply_moves(SOLVED_CUBE, moves);
     std::cerr << "  After 'R U R' U'': corner=" << (int)dbs.corner_db.lookup(state)
               << " edge0=" << (int)dbs.edge_db1.lookup(state.ep.data(), state.eo.data(), 0)
-              << " edge1=" << (int)dbs.edge_db2.lookup(state.ep.data(), state.eo.data(), 1) << "\n";
+              << " edge1=" << (int)dbs.edge_db2.lookup(state.ep.data(), state.eo.data(), 1)
+              << " edge2=" << (int)dbs.edge_db3.lookup(state.ep.data(), state.eo.data(), 2) << "\n";
 
     return 0;
 }

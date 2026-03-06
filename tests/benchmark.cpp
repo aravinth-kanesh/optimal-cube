@@ -43,7 +43,7 @@ int main(int argc, char* argv[]) {
     build_eo_move_table();
     build_inv_ep_table();
 
-    ParallelFastIDASolver solver(dbs.corner_db, dbs.edge_db1, dbs.edge_db2);
+    ParallelFastIDASolver solver(dbs.corner_db, dbs.edge_db1, dbs.edge_db2, dbs.edge_db3);
 
     // Fixed scrambles at known optimal depths for reproducibility
     struct Case { const char* label; const char* scramble; };
