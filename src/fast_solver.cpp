@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstring>
 #include <algorithm>
+#include <future>
 
 CpMoveTable CP_MOVE_TABLE;
 CoMoveTable CO_MOVE_TABLE;
@@ -98,34 +99,52 @@ uint32_t FastIDASolver::encode_ep(const uint8_t pos[6], const uint8_t ori[6]) co
     return perm_rank * 64u + orient;
 }
 
+void FastIDASolver::init_state(const CubeState& start) {
+    for (int i = 0; i < 8;  i++) { cp_[i] = start.cp[i]; co_[i] = start.co[i]; }
+    for (int i = 0; i < 12; i++) { ep_[i] = start.ep[i]; eo_[i] = start.eo[i]; }
+    cp_idx_ = encode_corner_perm(start.cp);
+    co_idx_ = encode_corner_orient(start.co);
+    eo_idx_ = encode_edge_orient(start.eo);
+    for (int k = 0; k < 6; k++) {
+        for (int j = 0; j < 12; j++) {
+            if (start.ep[j] == k)   { ep1_pos_[k] = j; ep1_ori_[k] = start.eo[j]; }
+            if (start.ep[j] == k+6) { ep2_pos_[k] = j; ep2_ori_[k] = start.eo[j]; }
+        }
+    }
+    ep1_idx_ = encode_ep(ep1_pos_, ep1_ori_);
+    ep2_idx_ = encode_ep(ep2_pos_, ep2_ori_);
+}
+
+int FastIDASolver::compute_heuristic(const CubeState& start) {
+    init_state(start);
+    return heuristic();
+}
+
+int FastIDASolver::search_threshold_single(const CubeState& start, int root_move,
+                                            int threshold, const std::atomic<bool>& found) {
+    nodes_explored_ = 0;
+    path_.clear();
+    abort_ = &found;
+    init_state(start);
+    apply(root_move);
+    path_.push_back(root_move);
+    int result = search(1, threshold, root_move);
+    abort_ = nullptr;
+    return result;
+}
+
 SolveResult FastIDASolver::solve(const CubeState& start, int max_depth) {
     auto t0 = std::chrono::high_resolution_clock::now();
     nodes_explored_ = 0;
     path_.clear();
 
     // Load initial state; encode indices once, reuse across threshold iterations
-    for (int i = 0; i < 8;  i++) { cp_[i] = start.cp[i]; co_[i] = start.co[i]; }
-    for (int i = 0; i < 12; i++) { ep_[i] = start.ep[i]; eo_[i] = start.eo[i]; }
-    const uint32_t start_cp_idx = encode_corner_perm(start.cp);
-    const uint32_t start_co_idx = encode_corner_orient(start.co);
-    const uint32_t start_eo_idx = encode_edge_orient(start.eo);
-
-    // Find positions and orientations of tracked edges for each group
+    init_state(start);
+    const uint32_t start_cp_idx  = cp_idx_,  start_co_idx  = co_idx_,  start_eo_idx  = eo_idx_;
+    const uint32_t start_ep1_idx = ep1_idx_, start_ep2_idx = ep2_idx_;
     uint8_t s_ep1_pos[6], s_ep1_ori[6], s_ep2_pos[6], s_ep2_ori[6];
-    for (int k = 0; k < 6; k++) {
-        for (int j = 0; j < 12; j++) {
-            if (start.ep[j] == k)   { s_ep1_pos[k] = j; s_ep1_ori[k] = start.eo[j]; }
-            if (start.ep[j] == k+6) { s_ep2_pos[k] = j; s_ep2_ori[k] = start.eo[j]; }
-        }
-    }
-
-    const uint32_t start_ep1_idx = encode_ep(s_ep1_pos, s_ep1_ori);
-    const uint32_t start_ep2_idx = encode_ep(s_ep2_pos, s_ep2_ori);
-
-    cp_idx_ = start_cp_idx; co_idx_ = start_co_idx; eo_idx_ = start_eo_idx;
-    ep1_idx_ = start_ep1_idx; ep2_idx_ = start_ep2_idx;
-    memcpy(ep1_pos_, s_ep1_pos, 6); memcpy(ep1_ori_, s_ep1_ori, 6);
-    memcpy(ep2_pos_, s_ep2_pos, 6); memcpy(ep2_ori_, s_ep2_ori, 6);
+    memcpy(s_ep1_pos, ep1_pos_, 6); memcpy(s_ep1_ori, ep1_ori_, 6);
+    memcpy(s_ep2_pos, ep2_pos_, 6); memcpy(s_ep2_ori, ep2_ori_, 6);
 
     if (is_solved()) {
         auto t1 = std::chrono::high_resolution_clock::now();
@@ -217,6 +236,7 @@ void FastIDASolver::apply(int m) {
 }
 
 int FastIDASolver::search(int g, int threshold, int prev_move) {
+    if (abort_ && abort_->load(std::memory_order_relaxed)) return INF;
     int h = heuristic();
     int f = g + h;
     if (f > threshold) return f;
@@ -257,4 +277,78 @@ int FastIDASolver::search(int g, int threshold, int prev_move) {
     }
 
     return min_t;
+}
+
+// -- ParallelFastIDASolver ---------------------------------------------------
+
+ParallelFastIDASolver::ParallelFastIDASolver(const CornerPatternDB& corner_db,
+                                             const EdgePatternDB&   edge_db1,
+                                             const EdgePatternDB&   edge_db2)
+    : corner_db_(corner_db), edge_db1_(edge_db1), edge_db2_(edge_db2),
+      nodes_explored_(0)
+{}
+
+SolveResult ParallelFastIDASolver::solve(const CubeState& start, int max_depth) {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    nodes_explored_ = 0;
+
+    if (start.is_solved()) {
+        auto t1 = std::chrono::high_resolution_clock::now();
+        return {true, {}, 0, std::chrono::duration<double>(t1 - t0).count()};
+    }
+
+    // Compute initial threshold with a temporary probe solver.
+    int threshold;
+    {
+        FastIDASolver probe(corner_db_, edge_db1_, edge_db2_);
+        threshold = probe.compute_heuristic(start);
+    }
+
+    using TaskResult = std::tuple<int, std::vector<int>, uint64_t>;
+
+    while (threshold <= max_depth) {
+        std::atomic<bool> found{false};
+
+        std::vector<std::future<TaskResult>> futures;
+        futures.reserve(NUM_MOVES);
+
+        for (int m = 0; m < NUM_MOVES; m++) {
+            futures.push_back(std::async(std::launch::async,
+                [&, m]() -> TaskResult {
+                    FastIDASolver solver(corner_db_, edge_db1_, edge_db2_);
+                    int result = solver.search_threshold_single(start, m, threshold, found);
+                    if (result == FastIDASolver::FOUND)
+                        found.store(true, std::memory_order_relaxed);
+                    return {result,
+                            result == FastIDASolver::FOUND ? solver.path() : std::vector<int>{},
+                            solver.get_nodes_explored()};
+                }));
+        }
+
+        int min_t = FastIDASolver::INF;
+        std::vector<int> solution;
+
+        for (auto& f : futures) {
+            auto [result, path, nodes] = f.get();
+            nodes_explored_ += nodes;
+            if (result == FastIDASolver::FOUND && solution.empty()) {
+                solution = std::move(path);
+                std::reverse(solution.begin(), solution.end());
+            } else if (result != FastIDASolver::FOUND && result < min_t) {
+                min_t = result;
+            }
+        }
+
+        if (!solution.empty()) {
+            auto t1 = std::chrono::high_resolution_clock::now();
+            return {true, solution, nodes_explored_,
+                    std::chrono::duration<double>(t1 - t0).count()};
+        }
+        if (min_t == FastIDASolver::INF) break;
+        threshold = min_t;
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    return {false, {}, nodes_explored_,
+            std::chrono::duration<double>(t1 - t0).count()};
 }

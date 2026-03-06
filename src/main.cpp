@@ -117,10 +117,10 @@ int main(int argc, char* argv[]) {
     // Initialise move tables
     init_moves();
 
-    // Set up solver: FastIDASolver when pattern DBs are available, IDASolver otherwise.
+    // Set up solver: ParallelFastIDASolver when pattern DBs are available, IDASolver otherwise.
     PatternDatabases dbs;
-    std::unique_ptr<FastIDASolver> fast_solver;
-    std::unique_ptr<IDASolver>     ida_solver;
+    std::unique_ptr<ParallelFastIDASolver> fast_solver;
+    std::unique_ptr<IDASolver>             ida_solver;
     std::function<SolveResult(const CubeState&, int)> solve_fn;
 
     if (!no_pattern_db) {
@@ -130,7 +130,7 @@ int main(int argc, char* argv[]) {
         build_co_move_table();
         build_eo_move_table();
         build_inv_ep_table();
-        fast_solver = std::make_unique<FastIDASolver>(dbs.corner_db, dbs.edge_db1, dbs.edge_db2);
+        fast_solver = std::make_unique<ParallelFastIDASolver>(dbs.corner_db, dbs.edge_db1, dbs.edge_db2);
         solve_fn = [&](const CubeState& s, int d) { return fast_solver->solve(s, d); };
     } else {
         std::cerr << "Using simple misplaced-cubies heuristic (slow!)\n";

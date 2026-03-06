@@ -4,6 +4,7 @@
 #include "pattern_db.h"
 #include "solver.h"
 #include <array>
+#include <atomic>
 #include <vector>
 
 // Precomputed move tables for right multiplication.
@@ -61,6 +62,9 @@ void build_inv_ep_table();
 // Uses right multiplication internally; path reversed before returning.
 class FastIDASolver {
 public:
+    static constexpr int FOUND = -1;
+    static constexpr int INF   = 1000;
+
     FastIDASolver(const CornerPatternDB& corner_db,
                   const EdgePatternDB&   edge_db1,
                   const EdgePatternDB&   edge_db2);
@@ -69,6 +73,17 @@ public:
 
     uint64_t get_nodes_explored() const { return nodes_explored_; }
 
+    // Compute h(start) without starting a search.
+    int compute_heuristic(const CubeState& start);
+
+    // Run one IDA* threshold restricted to root_move only.
+    // Checks *found each node for early exit. Returns FOUND or next threshold.
+    // If FOUND, path() holds the right-mult sequence; caller must reverse it.
+    int search_threshold_single(const CubeState& start, int root_move,
+                                int threshold, const std::atomic<bool>& found);
+
+    const std::vector<int>& path() const { return path_; }
+
 private:
     const CornerPatternDB& corner_db_;
     const EdgePatternDB&   edge_db1_;
@@ -76,6 +91,9 @@ private:
 
     uint64_t         nodes_explored_;
     std::vector<int> path_;
+
+    // Set by search_threshold_single for early exit when another thread finds a solution.
+    const std::atomic<bool>* abort_ = nullptr;
 
     // Core state — cp/co/ep/eo arrays + encoded indices for corner and full EO
     uint8_t  cp_[8], co_[8], ep_[12], eo_[12];
@@ -91,13 +109,34 @@ private:
     uint32_t ep1_idx_;  // encode_edge_partial result for group 0, kept in sync
     uint32_t ep2_idx_;  // encode_edge_partial result for group 1, kept in sync
 
-    static constexpr int FOUND = -1;
-    static constexpr int INF   = 1000;
-
+    void init_state(const CubeState& start);
     int  heuristic() const;
     bool is_solved()  const;
     void apply(int m);
     uint32_t encode_ep(const uint8_t pos[6], const uint8_t ori[6]) const;
 
     int search(int g, int threshold, int prev_move);
+};
+
+// Parallel IDA* solver. Within each threshold iteration, distributes the
+// 18 root moves across threads so they run simultaneously. Optimal: all
+// threads search the same threshold, so the first FOUND result is guaranteed
+// to be a minimum-move solution.
+//
+// Same preconditions as FastIDASolver (build all move tables first).
+class ParallelFastIDASolver {
+public:
+    ParallelFastIDASolver(const CornerPatternDB& corner_db,
+                          const EdgePatternDB&   edge_db1,
+                          const EdgePatternDB&   edge_db2);
+
+    SolveResult solve(const CubeState& start, int max_depth = 20);
+
+    uint64_t get_nodes_explored() const { return nodes_explored_; }
+
+private:
+    const CornerPatternDB& corner_db_;
+    const EdgePatternDB&   edge_db1_;
+    const EdgePatternDB&   edge_db2_;
+    uint64_t nodes_explored_;
 };
