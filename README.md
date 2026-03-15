@@ -1,7 +1,7 @@
-# Optimal Rubik's Cube Solver
+# Crux
 
-Finds provably optimal solutions to any 3×3 Rubik's cube scramble, guaranteed
-minimum move count (≤20 moves, by God's Number).
+Optimal 3x3 Rubik's cube solver. Finds the shortest possible solution to any
+scramble, guaranteed minimum move count (20 moves or fewer, per God's Number).
 
 Implements IDA* (Iterative Deepening A\*) with pattern databases, based on
 Richard Korf's 1997 paper *Finding Optimal Solutions to Rubik's Cube Using
@@ -10,15 +10,15 @@ Pattern Databases*.
 ## Algorithm
 
 The solver uses `FastIDASolver`, a cache-friendly IDA* variant with O(1) index
-updates via precomputed move tables. The heuristic is `max(h₁, h₂, h₃, h₄)`:
+updates via precomputed move tables. The heuristic is `max(h1, h2, h3, h4)`:
 
 - **Corner pattern database** - minimum moves to solve all 8 corners for every
-  corner configuration (8! × 3⁷ = 88,179,840 states, ~42 MB on disk).
+  corner configuration (8! x 3^7 = 88,179,840 states, ~42 MB on disk).
 - **Edge partial database, group 0** - minimum moves to correctly place and
-  orient edges UR, UF, UL, UB, DR, DF (P(12,6) × 2⁶ = 42,577,920 states, ~21 MB).
+  orient edges UR, UF, UL, UB, DR, DF (P(12,6) x 2^6 = 42,577,920 states, ~21 MB).
 - **Edge partial database, group 1** - same for edges DL, DB, FR, FL, BL, BR (~21 MB).
 - **Edge partial database, group 2** - same for alternating edges UR, UL, DR, DL, FR, BL
-  (edges 0,2,4,6,8,10; ~21 MB). Overlapping with both groups gives tighter bounds.
+  (~21 MB). Overlapping with both groups gives tighter bounds.
 
 All four are admissible, so IDA* returns the minimum-move solution.
 
@@ -28,7 +28,7 @@ and threads abort early once any thread finds a solution.
 
 ## Build
 
-Requires CMake ≥ 3.16, a C++17 compiler, and POSIX threads.
+Requires CMake >= 3.16, a C++17 compiler, and POSIX threads.
 
 ```bash
 cmake -B build-release -DCMAKE_BUILD_TYPE=Release
@@ -56,7 +56,7 @@ Then solve:
 # Skip pattern databases (much slower, useful for testing)
 ./build-release/cube_solver --scramble "R U F" --no-pattern-db
 
-# Interactive mode — enter moves, type 'show' to display the cube, 'solve' to solve
+# Interactive mode: enter moves, type 'show' to display the cube, 'solve' to solve
 ./build-release/cube_solver --interactive
 ```
 
@@ -81,17 +81,17 @@ Measured on Apple M-series (8-core, Release build, 4 pattern DBs, parallel solve
 
 | Scramble depth | Nodes explored | Solve time |
 |----------------|----------------|------------|
-| ≤ 10 moves | < 1,000 | < 2 ms |
-| 12 moves | 4K – 46K | 3 – 25 ms (median 13 ms) |
-| 15 moves | 9M – 88M | 5 – 49 s (median 33 s) |
+| up to 10 moves | < 1,000 | < 2 ms |
+| 12 moves | 4K - 46K | 3 - 25 ms (median 13 ms) |
+| 15 moves | 9M - 88M | 5 - 49 s (median 33 s) |
 
 Performance at depth 15 varies widely depending on how tight the heuristic
-lower bound is for that particular scramble. The worst-case scrambles (where
-all four pattern DBs give a lower bound several moves below the true optimum)
-require more IDA* iterations and dominate the solve time.
+lower bound is for a given scramble. Worst-case scrambles (where all four
+pattern DBs give a lower bound several moves below the true optimum) require
+more IDA* iterations and dominate the runtime.
 
 Without the pattern databases (`--no-pattern-db`), the misplaced-cubies heuristic
-is far weaker — expect 100–1000× slower for scrambles deeper than 10 moves.
+is far weaker. Expect 100-1000x slower for scrambles deeper than 10 moves.
 
 ## Tests
 
@@ -116,7 +116,7 @@ src/
   fast_solver.h / fast_solver.cpp - FastIDASolver, ParallelFastIDASolver,
                                     CP/CO/EO/INV_EP move tables
   heuristic.h / heuristic.cpp    - heuristic wrappers for IDASolver
-  utils.h / utils.cpp            - validation, ASCII display, formatting
+  utils.h / utils.cpp            - validation, ANSI cube display, formatting
   main.cpp                       - CLI entry point
   build_db_main.cpp              - pattern database builder
 tests/
